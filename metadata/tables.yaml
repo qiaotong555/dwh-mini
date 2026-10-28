@@ -1,0 +1,229 @@
+# dwh_mini 元数据 · 表结构 + 业务说明
+#
+# 结构由 mcp_server/make_metadata.py 从 dwh.duckdb 自动生成（重跑会保留这里的人工说明）；
+# 业务说明是数据开发该写的那部分 —— 真实工作里这叫「数据字典」。
+#
+# ⚠ 说明里必须出现用户会问的词（退款、拉链、SCD2、转化率…），
+#    否则检索再准也找不到 —— 元数据的价值就是「能被问到」。
+
+tables:
+- name: ods_order
+  layer: ODS
+  rows: 359
+  description: 订单原始表，业务库订单表的原样落地，不对状态做任何过滤
+  upstream: []
+  downstream:
+  - dwd_trade_order_detail
+  columns:
+  - name: order_id
+    type: VARCHAR
+    desc: 订单号，主键，形如 O00001
+  - name: user_id
+    type: VARCHAR
+    desc: 下单用户 ID
+  - name: product_id
+    type: VARCHAR
+    desc: 下单商品 ID，关联 dim_product.product_id
+  - name: quantity
+    type: BIGINT
+    desc: 购买数量
+  - name: amount
+    type: DOUBLE
+    desc: 订单金额，等于下单当时单价乘数量；注意这是下单金额不是成交金额
+  - name: order_status
+    type: VARCHAR
+    desc: 订单状态，取值为 PAID 已支付 / UNPAID 未支付 / CANCELLED 已取消
+  - name: create_time
+    type: TIMESTAMP
+    desc: 下单时间，关联维表时以它判断用哪个价格版本
+
+- name: ods_payment
+  layer: ODS
+  rows: 317
+  description: 支付流水原始表，只包含已支付订单的支付记录，带退款状态
+  upstream: []
+  downstream:
+  - dwd_trade_order_detail
+  columns:
+  - name: pay_id
+    type: VARCHAR
+    desc: 支付流水号，主键
+  - name: order_id
+    type: VARCHAR
+    desc: 对应订单号，一个订单最多一条支付记录
+  - name: pay_amount
+    type: DOUBLE
+    desc: 实际支付金额；退款单的该字段为 0
+  - name: pay_status
+    type: VARCHAR
+    desc: 支付状态，取值为 SUCCESS 支付成功 / REFUND 已退款；统计 GMV 时只算 SUCCESS
+  - name: pay_time
+    type: TIMESTAMP
+    desc: 支付时间
+
+- name: dim_product
+  layer: DIM
+  rows: 11
+  description: 商品维度表，用 SCD2 拉链保存历史价格版本，商品改价不覆盖旧记录
+  upstream: []
+  downstream:
+  - dwd_trade_order_detail
+  columns:
+  - name: product_id
+    type: VARCHAR
+    desc: 商品 ID，同一商品有多个历史版本时会重复出现
+  - name: product_name
+    type: VARCHAR
+    desc: 商品名称
+  - name: category
+    type: VARCHAR
+    desc: 商品类目，取值为 数码 / 服饰 / 食品 / 家居
+  - name: price
+    type: DOUBLE
+    desc: 该版本生效期间的商品单价；用哪个版本取决于下单时间
+  - name: effective_from
+    type: TIMESTAMP
+    desc: 该版本生效起始时间，等于商品改价时间
+  - name: effective_to
+    type: TIMESTAMP
+    desc: 该版本失效时间，等于下一版本生效时间；当前版本为 9999-12-31
+  - name: is_current
+    type: INTEGER
+    desc: 是否当前版本，1 是 / 0 否；每个商品恰好一条为 1
+
+- name: dwd_trade_order_detail
+  layer: DWD
+  rows: 359
+  description: 交易订单明细事务事实表，一单一行的宽表，已关联商品维表当时的版本与支付流水
+  upstream:
+  - ods_order
+  - ods_payment
+  - dim_product
+  downstream:
+  - dws_trade_daily
+  columns:
+  - name: order_id
+    type: VARCHAR
+    desc: 订单号，本表主键，不重复
+  - name: user_id
+    type: VARCHAR
+    desc: 下单用户 ID
+  - name: product_id
+    type: VARCHAR
+    desc: 商品 ID
+  - name: product_name
+    type: VARCHAR
+    desc: 商品名称，来自维表
+  - name: category
+    type: VARCHAR
+    desc: 商品类目，来自维表
+  - name: unit_price
+    type: DOUBLE
+    desc: 下单当时生效的商品单价，来自维表对应版本
+  - name: quantity
+    type: BIGINT
+    desc: 购买数量
+  - name: amount
+    type: DOUBLE
+    desc: 下单金额，等于 unit_price 乘 quantity
+  - name: order_status
+    type: VARCHAR
+    desc: 订单状态，PAID / UNPAID / CANCELLED
+  - name: create_time
+    type: TIMESTAMP
+    desc: 下单时间
+  - name: order_date
+    type: DATE
+    desc: 下单日期，所有下游按它汇总
+  - name: pay_id
+    type: VARCHAR
+    desc: 支付流水号，未支付订单为空
+  - name: pay_amount
+    type: DOUBLE
+    desc: 实际支付金额，未支付订单为空
+  - name: pay_status
+    type: VARCHAR
+    desc: 支付状态，SUCCESS / REFUND；未支付订单为空
+  - name: pay_time
+    type: TIMESTAMP
+    desc: 支付时间，未支付订单为空
+
+- name: dws_trade_daily
+  layer: DWS
+  rows: 7
+  description: 交易域按天汇总表，每天一行，是所有日报指标的唯一来源
+  upstream:
+  - dwd_trade_order_detail
+  downstream:
+  - ads_metric_daily_gmv
+  - ads_metric_pay_rate
+  columns:
+  - name: order_date
+    type: DATE
+    desc: 统计日期，主键
+  - name: order_cnt
+    type: BIGINT
+    desc: 当日下单数，含未支付和已取消订单
+  - name: paid_cnt
+    type: HUGEINT
+    desc: 当日支付成功订单数，按订单状态 PAID 统计
+  - name: refund_cnt
+    type: HUGEINT
+    desc: 当日退款订单数，按支付状态 REFUND 统计
+  - name: gmv
+    type: DOUBLE
+    desc: 当日成交总额，等于支付成功金额之和，退款和未支付不计入
+  - name: pay_rate
+    type: DOUBLE
+    desc: 当日支付转化率，等于支付成功订单数除以下单数，存 0 到 1 的小数
+
+- name: ads_metric_daily_gmv
+  layer: ADS
+  rows: 7
+  description: 应用层指标表，每日成交总额，供报表直接查询
+  upstream:
+  - dws_trade_daily
+  downstream: []
+  columns:
+  - name: order_date
+    type: DATE
+    desc: 统计日期
+  - name: gmv
+    type: DOUBLE
+    desc: 当日成交总额，口径同 dws_trade_daily 的 gmv
+
+- name: ads_metric_pay_rate
+  layer: ADS
+  rows: 7
+  description: 应用层指标表，每日支付转化率，同时提供小数和百分比两种形态
+  upstream:
+  - dws_trade_daily
+  downstream: []
+  columns:
+  - name: order_date
+    type: DATE
+    desc: 统计日期
+  - name: pay_rate
+    type: DOUBLE
+    desc: 支付转化率小数形态，取值 0 到 1
+  - name: pay_rate_pct
+    type: DOUBLE
+    desc: 支付转化率百分比形态，已乘 100 并保留两位小数
+
+- name: ads_metric_category_top
+  layer: ADS
+  rows: 4
+  description: 应用层指标表，类目销售额排行，名次从 1 连续编号
+  upstream:
+  - dwd_trade_order_detail
+  downstream: []
+  columns:
+  - name: category
+    type: VARCHAR
+    desc: 商品类目
+  - name: gmv
+    type: DOUBLE
+    desc: 该类目支付成功金额之和；所有类目之和应等于全站成交总额
+  - name: rn
+    type: BIGINT
+    desc: 名次，按 gmv 降序从 1 开始编号

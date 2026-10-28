@@ -1,0 +1,38 @@
+# dwh_mini 元数据 · 指标口径
+#
+# 这份文件是「人能读的口径定义」，MCP Server 靠它回答「XX 指标怎么算的」。
+# 每条指标必须有 definition + formula + source_table，否则 metadata_check.py 会 FAIL。
+#
+# aliases 很重要：用户不会说「pay_rate」，他会说「支付转化率」「转化率」。
+# 检索靠 aliases 兜底。
+
+metrics:
+- name: gmv
+  cn_name: 成交总额
+  definition: 当日支付成功的实际支付金额之和
+  formula: SUM(pay_amount) WHERE pay_status = 'SUCCESS'
+  source_table: dws_trade_daily
+  ads_table: ads_metric_daily_gmv
+  notes: 只算 SUCCESS；REFUND 不计入，未支付订单也不计入
+  aliases: [GMV, 成交额, 交易额, 销售额, 日销售额, 流水]
+  caveats: 与「下单金额」（SUM(amount)）不是一回事；有退款和未支付时两者差几十个百分点
+
+- name: pay_rate
+  cn_name: 支付转化率
+  definition: 当日支付成功的订单数 / 当日下单订单数
+  formula: SUM(CASE WHEN pay_status='SUCCESS' THEN 1 ELSE 0 END) / COUNT(*)
+  source_table: dws_trade_daily
+  ads_table: ads_metric_pay_rate
+  notes: 存 0—1 小数；ads_metric_pay_rate 另提供 pay_rate_pct（×100，保留 2 位）
+  aliases: [支付率, 支付转化率, 转化率, pay_rate_pct]
+  caveats: 分母是「下单数」，含 UNPAID 和 CANCELLED，不是「已支付数」
+
+- name: category_top
+  cn_name: 类目销售额排名
+  definition: 按商品类目汇总支付成功金额后降序编号
+  formula: SUM(pay_amount) GROUP BY category WHERE pay_status='SUCCESS'
+  source_table: dwd_trade_order_detail
+  ads_table: ads_metric_category_top
+  notes: 直接从 DWD 出，不经 DWS —— 类目维度在 DWS 里已被聚合掉
+  aliases: [类目排行, 类目Top, 品类销售额, 类目排名, category_rank]
+  caveats: 各项之和必须等于 DWD 的成功支付总额，这是对账口径

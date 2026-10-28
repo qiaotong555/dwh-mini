@@ -122,6 +122,25 @@ CSV ──► ODS ──► DIM（SCD2 拉链）──┐
 | `dwh_lab.py` | 分层实现：6 个函数，顺序是 ODS→DIM→DWD→DWS→ADS→断言 |
 | `dwh_check.py` | 26 项验收，五层 |
 | `data/*.csv` | 样本数据（37 KB，随仓库提供） |
+| `metadata/*.yaml` | 数据字典：8 张表 48 个字段的说明 + 3 个指标口径 |
+| `mcp_server/` | 把数据字典包成 MCP 工具，见 [mcp_server/README.md](mcp_server/README.md) |
+
+## ①-B · 元数据 MCP Server
+
+数仓能跑通之后，第二个问题是**别人不会用**：gmv 怎么算、哪个字段是退款、SCD2 在哪。
+这部分做成了独立的 MCP 服务，让 Cursor / Claude Desktop 能直接查：
+
+```bash
+cd mcp_server
+..\..\.venv\Scripts\python.exe metadata_check.py   # 14 项验收
+..\..\.venv\Scripts\python.exe smoke_test.py       # 真实 stdio 冒烟测试
+```
+
+四个工具：`list_tables` / `describe_table` / `find_metric` / `search_metadata`。
+挂载配置、设计取舍（为什么不引入 embedding）见 `mcp_server/README.md`。
+
+**这一层和数仓层的分工是刻意的**：`dwh_mini` 解决「数据算得对不对」，
+`mcp_server` 解决「数据能不能被用起来」。两件事分开验收、分开度量。
 
 ## 已知限制
 
