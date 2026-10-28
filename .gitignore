@@ -1,0 +1,4 @@
+dwh.duckdb
+_check_*.duckdb
+__pycache__/
+*.pyc
