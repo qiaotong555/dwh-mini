@@ -1,15 +1,25 @@
 # dwh_mini 元数据 MCP Server
 
 把 `dwh_mini` 的数据字典（8 张表 / 48 个字段 / 3 个指标）包成 MCP 工具，
-让 Cursor / Claude Desktop 这类客户端能直接回答：
+让 Cursor / Claude Desktop 这类客户端能直接回答。
 
-```
-你：dws_trade_daily 的 gmv 是怎么算的？
-模型：gmv（成交总额）口径是「当日支付成功的实际支付金额之和」，
-      公式 SUM(pay_amount) WHERE pay_status = 'SUCCESS'，
-      来源表 dws_trade_daily → 指标表 ads_metric_daily_gmv。
-      注意：用 pay_amount 不用 amount，退款和未支付都不计入。
-```
+## 实际效果（Cursor Agent 模式的真实输出）
+
+> **你**：dws_trade_daily 的 gmv 是怎么算的？
+>
+> **模型**：`dws_trade_daily.gmv` 是当日成交总额：只加总支付成功的实际支付金额，退款和未支付都不进。
+>
+> 口径公式：`SUM(pay_amount) WHERE pay_status = 'SUCCESS'`
+> 字段说明：`gmv (DOUBLE)` = 当日成交总额，等于支付成功金额之和
+>
+> 几点容易混：
+> - **不是下单金额**。下单金额是 `SUM(amount)`，含未支付、已取消；有退款和未支付时两者会差几十个百分点。
+> - 上游是明细表 `dwd_trade_order_detail`；下游指标表是 `ads_metric_daily_gmv`。
+> - 同行的 `paid_cnt` 按订单状态 `PAID` 计支付成功单数；`gmv` 按支付状态 `SUCCESS` 计金额。
+
+这段回答里最有价值的是最后一条：**`paid_cnt` 和 `gmv` 的口径差异不在任何单个字段说明里**，
+是模型把多个字段放在一起对比得出的。这正是「结构化元数据」相对「一份 Word 数据字典」的差别 ——
+后者只能被人读，前者能被组合查询。
 
 ## 四个工具
 
@@ -113,3 +123,4 @@ print("debug", file=sys.stderr)
 | 无向量检索 | 关键词 + 2-gram，同义改写能力弱（说「营业额」找不到「gmv」，除非写进 aliases） |
 | 元数据手写 | `tables.yaml` 的说明靠人维护，表结构变了要重跑 `make_metadata.py` |
 | 单进程 | stdio 单客户端，多人共用要改 streamable-http |
+| 与其它 MCP Server 共存 | 同时挂多个 server 时，模型可能先想到别的工具（实测会在开头多说一句无关的 graphflow 上下文）。要隔离就把配置放进项目级 `.cursor/mcp.json` 而不是全局 |
